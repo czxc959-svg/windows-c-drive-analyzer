@@ -1,0 +1,241 @@
+﻿python : Traceback (most recent call last):
+所在位置 行:1 字符: 1
++ python -c "
++ ~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "<string>", line 7, in <module>
+UnicodeEncodeError: 'gbk' codec can't encode character '\u25ba' in position 19: illegal multibyte sequence
+1: """
+2: ================================================================================
+3:   C 盘磁盘空间扫描分析工具 | C Drive Disk Space Analyzer
+4:   版本: 1.0
+5:   位置: D:\CDriveScan\scan.py
+6: --------------------------------------------------------------------------------
+7:   安全声明 (SAFETY NOTICE):
+8:       本脚本对 C 盘执行完全只读操作。
+9:       - 不会删除任何文件
+10:       - 不会修改任何文件
+11:       - 不会向 C 盘写入任何内容
+12:       所有分析报告均保存在 D:\CDriveScan\reports\ 文件夹中。
+13:       是否清理 C 盘，由用户自行决定。
+14: ================================================================================
+15: """
+16: 
+17: import os
+18: import sys
+19: import time
+20: import datetime
+21: import traceback
+22: from collections import defaultdict
+23: 
+24: # 强制使用 UTF-8 输出，防止中文路径乱码
+25: if hasattr(sys.stdout, 'reconfigure'):
+26:     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+27: if hasattr(sys.stderr, 'reconfigure'):
+28:     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+29: 
+30: # ── 常量配置 ──────────────────────────────────────────────────────────────────
+31: SCAN_ROOT    = "C:\\"
+32: REPORT_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+33: TOP_N_FILES  = 50
+34: TOP_N_FOLDERS= 30
+35: MIN_FILE_SIZE= 1 * 1024 * 1024   # 1 MB
+36: PROGRESS_EVERY = 5000
+37: 
+38: # ── 文件类型分类 ───────────────────────────────────────────────────────────────
+39: FILE_CATEGORIES = {
+40:     "视频":        {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".rmvb", ".ts"},
+41:     "音频":        {".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".wma"},
+42:     "图片":        {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".ico"},
+43:     "文档":        {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"},
+44:     "压缩包":      {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso"},
+45:     "磁盘镜像":    {".iso", ".img", ".vhd", ".vmdk", ".vdi"},
+46:     "安装程序":    {".exe", ".msi", ".msix", ".appx"},
+47:     "系统文件":    {".dll", ".sys", ".drv", ".cab", ".inf", ".dat"},
+48:     "代码/项目":   {".py", ".js", ".ts", ".java", ".cpp", ".c", ".cs", ".go", ".json", ".xml"},
+49:     "数据库":      {".db", ".sqlite", ".mdf", ".ldf", ".accdb"},
+50:     "缓存/临时":   {".tmp", ".temp", ".cache", ".log", ".dmp", ".etl"},
+51: }
+52: 
+53: def get_category(ext):
+54:     ext = ext.lower()
+55:     for cat, exts in FILE_CATEGORIES.items():
+56:         if ext in exts:
+57:             return cat
+58:     return "其他"
+59: 
+60: def format_size(bytes_val):
+61:     if bytes_val >= 1024**3:
+62:         return f"{bytes_val / 1024**3:8.2f} GB"
+63:     elif bytes_val >= 1024**2:
+64:         return f"{bytes_val / 1024**2:8.2f} MB"
+65:     elif bytes_val >= 1024:
+66:         return f"{bytes_val / 1024:8.2f} KB"
+67:     else:
+68:         return f"{bytes_val:8d}  B"
+69: 
+70: def format_size_short(bytes_val):
+71:     if bytes_val >= 1024**3:
+72:         return f"{bytes_val / 1024**3:.2f} GB"
+73:     elif bytes_val >= 1024**2:
+74:         return f"{bytes_val / 1024**2:.2f} MB"
+75:     else:
+76:         return f"{bytes_val / 1024:.2f} KB"
+77: 
+78: # ─────────────────────────────────────────────────────────────────────────────
+79: #  核心扫描函数（只读！）
+80: # ─────────────────────────────────────────────────────────────────────────────
+81: def scan_drive(root_path):
+82:     folder_sizes   = defaultdict(int)
+83:     all_files      = []
+84:     category_sizes = defaultdict(int)
+85:     error_paths    = []
+86:     file_count     = 0
+87:     total_size     = 0
+88:     start_time     = time.time()
+89: 
+90:     print("\n" + "="*70)
+91:     print(f"  开始扫描: {root_path}")
+92:     print(f"  时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+93:     print("="*70)
+94:     print("  [只读模式] 本脚本不会对 C 盘做任何修改或删除操作")
+95:     print("="*70)
+96:     print("  扫描进行中，请稍候...\n")
+97: 
+98:     for dirpath, dirnames, filenames in os.walk(root_path, topdown=True, followlinks=False):
+99:         try:
+100:             if os.path.islink(dirpath):
+101:                 dirnames.clear()
+102:                 continue
+103:         except Exception:
+104:             pass
+105: 
+106:         for filename in filenames:
+107:             filepath = os.path.join(dirpath, filename)
+108:             try:
+109:                 if os.path.islink(filepath):
+110:                     continue
+111:                 stat = os.stat(filepath, follow_symlinks=False)
+112:                 size = stat.st_size
+113:                 ext  = os.path.splitext(filename)[1]
+114:                 cat  = get_category(ext)
+115: 
+116:                 # 累计每一级父目录的大小
+117:                 cur = dirpath
+118:                 while True:
+119:                     folder_sizes[cur] += size
+120:                     parent = os.path.dirname(cur)
+121:                     if parent == cur:
+122:                         break
+123:                     cur = parent
+124: 
+125:                 if size >= MIN_FILE_SIZE:
+126:                     all_files.append((filepath, size, ext))
+127: 
+128:                 category_sizes[cat] += size
+129:                 total_size += size
+130:                 file_count += 1
+131: 
+132:                 if file_count % PROGRESS_EVERY == 0:
+133:                     elapsed = time.time() - start_time
+134:                     short_path = dirpath[:65] + "..." if len(dirpath) > 65 else dirpath
+135:                     print(f"  [{file_count:,} 个文件] [{elapsed:.0f}s] {short_path}")
+136: 
+137:             except PermissionError:
+138:                 error_paths.append(filepath)
+139:             except FileNotFoundError:
+140:                 pass
+141:             except Exception as e:
+142:                 error_paths.append(f"{filepath} ({type(e).__name__})")
+143: 
+144:     elapsed = time.time() - start_time
+145:     print(f"\n  扫描完成！共 {file_count:,} 个文件，耗时 {elapsed:.1f} 秒。\n")
+146:     return folder_sizes, all_files, category_sizes, error_paths, total_size, file_count
+147: 
+148: 
+149: # ─────────────────────────────────────────────────────────────────────────────
+150: #  报告生成
+151: # ─────────────────────────────────────────────────────────────────────────────
+152: def generate_report(folder_sizes, all_files, category_sizes,
+153:                     error_paths, total_size, file_count, scan_root):
+154:     os.makedirs(REPORT_DIR, exist_ok=True)
+155:     ts          = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+156:     report_path = os.path.join(REPORT_DIR, f"report_{ts}.txt")
+157: 
+158:     lines = []
+159:     def w(line=""):
+160:         lines.append(line)
+161:         print(line)
+162: 
+163:     w("=" * 80)
+164:     w("   C 盘磁盘空间扫描分析报告")
+165:     w(f"   扫描时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+166:     w(f"   扫描路径: {scan_root}")
+167:     w("=" * 80)
+168: 
+169:     # 1. 总览
+170:     w()
+171:     w("【1】总体概览")
+172:     w("-" * 80)
+173:     w(f"  总文件数    : {file_count:,} 个")
+174:     w(f"  总占用空间  : {format_size_short(total_size)}")
+175:     w(f"  访问受限路径: {len(error_paths):,} 个（系统保护目录，已跳过）")
+176: 
+177:     # 2. 文件类型分布
+178:     w()
+179:     w("【2】文件类型占用分布（按大小排序）")
+180:     w("-" * 80)
+181:     for cat, sz in sorted(category_sizes.items(), key=lambda x: x[1], reverse=True):
+182:         bar = "█" * int(sz / total_size * 40) if total_size > 0 else ""
+183:         pct = sz / total_size * 100 if total_size > 0 else 0
+184:         w(f"  {cat:<12} {format_size(sz)}  {bar:<40} {pct:5.1f}%")
+185: 
+186:     # 3. 最大文件夹
+187:     w()
+188:     w(f"【3】占用空间最大的 {TOP_N_FOLDERS} 个文件夹")
+189:     w("-" * 80)
+190:     w(f"  {'排名':<4} {'大小':>10}  {'路径'}")
+191:     w(f"  {'-'*4} {'-'*10}  {'-'*60}")
+192:     sorted_folders = sorted(
+193:         [(p, s) for p, s in folder_sizes.items() if p != scan_root and s > 0],
+194:         key=lambda x: x[1], reverse=True
+195:     )[:TOP_N_FOLDERS]
+196:     for i, (path, sz) in enumerate(sorted_folders, 1):
+197:         w(f"  {i:<4} {format_size(sz)}  {path}")
+198: 
+199:     # 4. 最大文件
+200:     w()
+201:     w(f"【4】占用空间最大的 {TOP_N_FILES} 个具体文件（>= 1 MB）")
+202:     w("-" * 80)
+203:     w(f"  {'排名':<4} {'大小':>10}  {'路径'}")
+204:     w(f"  {'-'*4} {'-'*10}  {'-'*60}")
+205:     for i, (path, sz, ext) in enumerate(
+206:         sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES], 1
+207:     ):
+208:         w(f"  {i:<4} {format_size(sz)}  {path}")
+209:         w(f"       {'':>10}  类型: {get_category(ext)}")
+210: 
+211:     # 5. 可清理建议
+212:     w()
+213:     w("【5】可清理区域提示（仅供参考，是否清理请您自行决定）")
+214:     w("-" * 80)
+215:     suggestions = [
+216:         ("临时文件",     r"C:\Users", "AppData\\Local\\Temp",
+217:          "Windows 临时文件，通常可安全清理。按 Win+R 输入 %temp% 打开后全选删除。"),
+218:         ("NVIDIA着色器", r"C:\Users", "AppData\\LocalLow\\NVIDIA\\PerDriverVersion\\DXCache",
+219:          "显卡缓存，删除后游戏启动时会自动重新生成，不影响正常使用。"),
+220:         ("Chrome 缓存",  r"C:\Users", "AppData\\Local\\Google\\Chrome",
+221:          "建议在 Chrome 浏览器内按 Ctrl+Shift+Del 清理，不要直接删除文件夹。"),
+222:         ("WPS 缓存",     r"C:\Users", "AppData\\Roaming\\kingsoft",
+223:          "WPS Office 的插件和缓存文件，可通过 WPS 软件内设置清理。"),
+224:         ("Windows更新",  r"C:\Windows", "SoftwareDistribution\\Download",
+225:          "旧版更新包，可通过「磁盘清理」中的「Windows 更新清理」安全删除。"),
+226:         ("回收站",       r"C:\$Recycle.Bin", "",
+227:          "直接右键桌面回收站 -> 清空回收站 即可。"),
+228:     ]
+229:     for name, base, sub, tip in suggestions:
+230:         full_path = os.path.join(base, sub) if sub else base
+231:         sz = folder_sizes.get(full_path)
+232:         sz_str = format_size_short(sz) if sz else "（路径含用户名，请手动核查）"

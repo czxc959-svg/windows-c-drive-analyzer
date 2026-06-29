@@ -1,4 +1,4 @@
-﻿"""
+"""
 ================================================================================
   C 盘磁盘空间扫描分析工具 | C Drive Disk Space Analyzer
   版本: 1.0
@@ -74,6 +74,41 @@ def format_size_short(bytes_val):
         return f"{bytes_val / 1024**2:.2f} MB"
     else:
         return f"{bytes_val / 1024:.2f} KB"
+
+def guess_app_name(filepath):
+    """从文件路径推断所属应用程序名称"""
+    parts = filepath.replace('/', '\\').split('\\')
+    path_lower = filepath.lower()
+
+    app_dirs = {'program files', 'program files (x86)', 'programdata'}
+    appdata_subdirs = {'local', 'roaming', 'locallow'}
+    skip_names = {'common files', 'microsoft shared', 'packages'}
+
+    for i, part in enumerate(parts):
+        pl = part.lower()
+        if pl in app_dirs and i + 1 < len(parts):
+            candidate = parts[i + 1]
+            if candidate.lower() in skip_names and i + 2 < len(parts):
+                return parts[i + 2]
+            return candidate
+        if pl == 'appdata' and i + 2 < len(parts):
+            if parts[i + 1].lower() in appdata_subdirs:
+                candidate = parts[i + 2]
+                if candidate.lower() in skip_names and i + 3 < len(parts):
+                    return parts[i + 3]
+                return candidate
+
+    if '\\windows\\' in path_lower or path_lower.startswith('c:\\windows'):
+        return "Windows 系统"
+    if '\\downloads\\' in path_lower:
+        return "用户下载"
+    if '\\desktop\\' in path_lower:
+        return "用户桌面"
+    if '\\documents\\' in path_lower:
+        return "用户文档"
+
+    return "未知"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  核心扫描函数（只读！）
@@ -206,7 +241,7 @@ def generate_report(folder_sizes, all_files, category_sizes,
         sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES], 1
     ):
         w(f"  {i:<4} {format_size(sz)}  {path}")
-        w(f"       {'':>10}  类型: {get_category(ext)}")
+        w(f"       {'':>10}  类型: {get_category(ext)}  |  所属应用: {guess_app_name(path)}")
 
     # 5. 可清理建议
     w()
