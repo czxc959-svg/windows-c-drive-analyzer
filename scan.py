@@ -20,6 +20,7 @@ import time
 import datetime
 import traceback
 from collections import defaultdict
+import webbrowser
 
 # 强制使用 UTF-8 输出，防止中文路径乱码
 if hasattr(sys.stdout, 'reconfigure'):
@@ -233,17 +234,23 @@ def generate_report(folder_sizes, all_files, category_sizes,
 
     # 4. 最大文件
     w()
-    w(f"【4】占用空间最大的 {TOP_N_FILES} 个具体文件（>= 1 MB）")
+    w(f"\u30104\u3011\u5360\u7528\u7a7a\u95f4\u6700\u5927\u7684 {TOP_N_FILES} \u4e2a\u6587\u4ef6\uff08>= 1 MB\uff09\u2014 \u6309\u5e94\u7528\u5206\u7ec4")
     w("-" * 80)
-    w(f"  {'排名':<4} {'大小':>10}  {'路径'}")
-    w(f"  {'-'*4} {'-'*10}  {'-'*60}")
-    for i, (path, sz, ext) in enumerate(
-        sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES], 1
-    ):
-        w(f"  {i:<4} {format_size(sz)}  {path}")
-        w(f"       {'':>10}  类型: {get_category(ext)}  |  所属应用: {guess_app_name(path)}")
-
-    # 5. 可清理建议
+    top_files = sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES]
+    app_groups_rpt = defaultdict(list)
+    for path, sz, ext in top_files:
+        app = guess_app_name(path)
+        app_groups_rpt[app].append((path, sz, ext))
+    sorted_groups = sorted(app_groups_rpt.items(), key=lambda x: sum(s for _,s,_ in x[1]), reverse=True)
+    rank = 1
+    for app, files in sorted_groups:
+        group_total = sum(s for _,s,_ in files)
+        w(f"  \u250c\u2500 {app}\uff08\u5171 {format_size_short(group_total)}\uff0c{len(files)} \u4e2a\u6587\u4ef6\uff09")
+        for path, sz, ext in files:
+            w(f"  \u2502  {rank:<3} {format_size(sz)}  {get_category(ext):<8}  {path}")
+            rank += 1
+        w("  \u2514" + "\u2500" * 75)
+        w()
     w()
     w("【5】可清理区域提示（仅供参考，是否清理请您自行决定）")
     w("-" * 80)
@@ -293,6 +300,149 @@ def generate_report(folder_sizes, all_files, category_sizes,
 
     return report_path
 
+def generate_html_report(folder_sizes, all_files, category_sizes,
+                         error_paths, total_size, file_count, scan_root):
+    """生成 HTML 格式的可视化分析报告"""
+    import html as html_mod
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    html_path = os.path.join(REPORT_DIR, f"report_{ts}.html")
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    top_files = sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES]
+    app_groups = defaultdict(list)
+    for path, sz, ext in top_files:
+        app = guess_app_name(path)
+        app_groups[app].append((path, sz, ext))
+    sorted_app_groups = sorted(app_groups.items(), key=lambda x: sum(s for _,s,_ in x[1]), reverse=True)
+
+    sorted_folders = sorted(
+        [(p, s) for p, s in folder_sizes.items() if p != scan_root and s > 0],
+        key=lambda x: x[1], reverse=True
+    )[:TOP_N_FOLDERS]
+
+    sorted_cats = sorted(category_sizes.items(), key=lambda x: x[1], reverse=True)
+
+    cat_colors = {
+        "视频": "#e74c3c", "音频": "#e67e22", "图片": "#f1c40f",
+        "文档": "#2ecc71", "压缩包": "#3498db", "磁盘镜像": "#9b59b6",
+        "安装程序": "#e91e63", "系统文件": "#607d8b", "代码/项目": "#00bcd4",
+        "数据库": "#8bc34a", "缓存/临时": "#ff9800", "其他": "#95a5a6",
+    }
+
+    cat_rows = ""
+    for cat, sz in sorted_cats:
+        pct = sz / total_size * 100 if total_size > 0 else 0
+        color = cat_colors.get(cat, "#95a5a6")
+        cat_rows += '<tr>'
+        cat_rows += '<td><span class="badge" style="background:' + color + '">' + html_mod.escape(cat) + '</span></td>'
+        cat_rows += '<td>' + format_size_short(sz) + '</td>'
+        cat_rows += '<td style="width:50%"><div class="bar-bg"><div class="bar-fill" style="width:' + f"{pct:.1f}" + '%;background:' + color + '"></div></div></td>'
+        cat_rows += '<td class="num">' + f"{pct:.1f}" + '%</td>'
+        cat_rows += '</tr>\n'
+
+    folder_rows = ""
+    for i, (path, sz) in enumerate(sorted_folders, 1):
+        pct = sz / total_size * 100 if total_size > 0 else 0
+        folder_rows += '<tr>'
+        folder_rows += '<td class="num">' + str(i) + '</td>'
+        folder_rows += '<td class="num">' + format_size_short(sz) + '</td>'
+        folder_rows += '<td class="path">' + html_mod.escape(path) + '</td>'
+        folder_rows += '<td class="num">' + f"{pct:.1f}" + '%</td>'
+        folder_rows += '</tr>\n'
+
+    app_sections = ""
+    for app, files in sorted_app_groups:
+        group_total = sum(s for _,s,_ in files)
+        file_rows = ""
+        for path, sz, ext in files:
+            cat = get_category(ext)
+            color = cat_colors.get(cat, "#95a5a6")
+            file_rows += '<tr>'
+            file_rows += '<td class="num">' + format_size_short(sz) + '</td>'
+            file_rows += '<td><span class="badge sm" style="background:' + color + '">' + html_mod.escape(cat) + '</span></td>'
+            file_rows += '<td class="path">' + html_mod.escape(path) + '</td>'
+            file_rows += '</tr>\n'
+
+        app_sections += '<details open><summary>'
+        app_sections += '<span class="app-name">' + html_mod.escape(app) + '</span>'
+        app_sections += '<span class="app-meta">' + format_size_short(group_total) + ' &middot; ' + str(len(files)) + ' 个文件</span>'
+        app_sections += '</summary>'
+        app_sections += '<table class="file-table"><thead><tr><th>大小</th><th>类型</th><th>文件路径</th></tr></thead>'
+        app_sections += '<tbody>' + file_rows + '</tbody></table></details>\n'
+
+    css = """*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(135deg,#0f0c29,#1a1a2e,#16213e);color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;padding:20px}
+.container{max-width:1100px;margin:0 auto}
+h1{text-align:center;font-size:2em;margin:30px 0 5px;background:linear-gradient(90deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:700}
+.subtitle{text-align:center;color:#888;margin-bottom:30px;font-size:0.95em}
+.card{background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:28px;margin:20px 0;transition:transform 0.2s}
+.card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,0.15)}
+.card h2{font-size:1.3em;margin-bottom:18px;color:#fff;display:flex;align-items:center;gap:10px}
+.card h2 .icon{font-size:1.4em}
+.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.stat{background:rgba(255,255,255,0.04);border-radius:12px;padding:20px;text-align:center}
+.stat .val{font-size:2em;font-weight:700;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.stat .label{color:#999;font-size:0.85em;margin-top:6px}
+table{width:100%;border-collapse:collapse;font-size:0.9em}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid rgba(255,255,255,0.1);color:#999;font-weight:600;font-size:0.85em;text-transform:uppercase;letter-spacing:0.5px}
+td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04)}
+tr:hover td{background:rgba(255,255,255,0.03)}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.path{font-family:'Cascadia Code','Consolas',monospace;font-size:0.85em;color:#b0b0b0;word-break:break-all}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.8em;color:#fff;font-weight:500}
+.badge.sm{padding:2px 8px;font-size:0.75em}
+.bar-bg{background:rgba(255,255,255,0.08);border-radius:6px;height:22px;overflow:hidden}
+.bar-fill{height:100%;border-radius:6px;transition:width 1s ease}
+details{background:rgba(255,255,255,0.03);border-radius:12px;margin:10px 0;border:1px solid rgba(255,255,255,0.05);overflow:hidden}
+details[open]{border-color:rgba(102,126,234,0.3)}
+summary{padding:14px 18px;cursor:pointer;display:flex;align-items:center;gap:12px;font-weight:500;transition:background 0.2s}
+summary:hover{background:rgba(255,255,255,0.05)}
+summary::marker{color:#667eea}
+.app-name{font-size:1.05em;color:#fff}
+.app-meta{color:#888;font-size:0.85em;margin-left:auto}
+.file-table{margin:0}.file-table th{padding:8px 18px}.file-table td{padding:6px 18px}
+.safety{background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.2);border-radius:12px;padding:20px;margin:20px 0;text-align:center;color:#2ecc71}
+.footer{text-align:center;color:#666;font-size:0.85em;padding:30px 0}"""
+
+    js = """document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.bar-fill').forEach(function(b){var w=b.style.width;b.style.width='0';requestAnimationFrame(function(){b.style.width=w})})});"""
+
+    html_out = '<!DOCTYPE html>\n<html lang="zh-CN"><head><meta charset="UTF-8">\n'
+    html_out += '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
+    html_out += '<title>C盘空间分析报告 - ' + now_str + '</title>\n'
+    html_out += '<style>' + css + '</style></head><body><div class="container">\n'
+    html_out += '<h1>C 盘磁盘空间扫描分析报告</h1>\n'
+    html_out += '<p class="subtitle">扫描时间：' + now_str + '&emsp;&middot;&emsp;扫描路径：' + html_mod.escape(scan_root) + '</p>\n'
+
+    html_out += '<div class="card"><h2><span class="icon">&#x1F4CA;</span> 总体概览</h2><div class="overview">'
+    html_out += '<div class="stat"><div class="val">' + f"{file_count:,}" + '</div><div class="label">文件总数</div></div>'
+    html_out += '<div class="stat"><div class="val">' + format_size_short(total_size) + '</div><div class="label">总占用空间</div></div>'
+    html_out += '<div class="stat"><div class="val">' + f"{len(error_paths):,}" + '</div><div class="label">受限路径（已跳过）</div></div>'
+    html_out += '</div></div>\n'
+
+    html_out += '<div class="card"><h2><span class="icon">&#x1F4C1;</span> 文件类型占用分布</h2>'
+    html_out += '<table><thead><tr><th>类型</th><th>大小</th><th>占比</th><th></th></tr></thead>'
+    html_out += '<tbody>' + cat_rows + '</tbody></table></div>\n'
+
+    html_out += '<div class="card"><h2><span class="icon">&#x1F4C2;</span> 占用最大的 ' + str(TOP_N_FOLDERS) + ' 个文件夹</h2>'
+    html_out += '<table><thead><tr><th>#</th><th>大小</th><th>路径</th><th>占比</th></tr></thead>'
+    html_out += '<tbody>' + folder_rows + '</tbody></table></div>\n'
+
+    html_out += '<div class="card"><h2><span class="icon">&#x1F50D;</span> 占用最大的 ' + str(TOP_N_FILES) + ' 个文件 — 按应用分组</h2>'
+    html_out += '<p style="color:#888;font-size:0.9em;margin-bottom:16px">点击应用名称可以展开/折叠文件列表</p>'
+    html_out += app_sections + '</div>\n'
+
+    html_out += '<div class="safety">&#x1F512; 本工具严格只读，未对 C 盘做任何修改。扫描报告仅供参考，清理前请仔细确认文件用途。</div>\n'
+    html_out += '<div class="footer">C Drive Disk Space Analyzer &middot; ' + now_str + '</div>\n'
+    html_out += '</div><script>' + js + '</script></body></html>'
+
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html_out)
+
+    return html_path
+
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  主程序
@@ -313,6 +463,17 @@ def main():
             folder_sizes, all_files, category_sizes,
             error_paths, total_size, file_count, SCAN_ROOT
         )
+
+        html_path = generate_html_report(
+            folder_sizes, all_files, category_sizes,
+            error_paths, total_size, file_count, SCAN_ROOT
+        )
+        print(f"\n  HTML \u53ef\u89c6\u5316\u62a5\u544a\u5df2\u4fdd\u5b58\u81f3: {html_path}")
+        print("  \u6b63\u5728\u6253\u5f00\u6d4f\u89c8\u5668...")
+        try:
+            webbrowser.open(html_path)
+        except Exception:
+            pass
     except KeyboardInterrupt:
         print("\n\n  扫描被用户中断。")
     except Exception as e:
