@@ -234,13 +234,22 @@ def generate_report(folder_sizes, all_files, category_sizes,
 
     # 4. 最大文件
     w()
-    w(f"\u30104\u3011\u5360\u7528\u7a7a\u95f4\u6700\u5927\u7684 {TOP_N_FILES} \u4e2a\u6587\u4ef6\uff08>= 1 MB\uff09\u2014 \u6309\u5e94\u7528\u5206\u7ec4")
+    w("【4】占用空间最大的 100 个文件（按应用分组）")
     w("-" * 80)
-    top_files = sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES]
-    app_groups_rpt = defaultdict(list)
+    top_files = sorted(all_files, key=lambda x: x[1], reverse=True)
+    
+    filtered_top = []
     for path, sz, ext in top_files:
         app = guess_app_name(path)
+        if app != "Windows 系统":
+            filtered_top.append((path, sz, ext, app))
+            
+    filtered_top = filtered_top[:100]
+    
+    app_groups_rpt = defaultdict(list)
+    for path, sz, ext, app in filtered_top:
         app_groups_rpt[app].append((path, sz, ext))
+        
     sorted_groups = sorted(app_groups_rpt.items(), key=lambda x: sum(s for _,s,_ in x[1]), reverse=True)
     rank = 1
     for app, files in sorted_groups:
@@ -267,6 +276,9 @@ def generate_report(folder_sizes, all_files, category_sizes,
          "旧版更新包，可通过「磁盘清理」中的「Windows 更新清理」安全删除。"),
         ("回收站",       r"C:\$Recycle.Bin", "",
          "直接右键桌面回收站 -> 清空回收站 即可。"),
+        ("💡 快速打开隐藏路径 (如 AppData)", "", "",
+         "由于 AppData 等系统目录默认隐藏，最快的方法是：选中报告中的路径前半部分（如 C:\\Users\\用户名\\AppData\\...），\n"
+         "    右键复制，然后打开任意文件夹，将路径【粘贴到顶部的地址栏】按回车即可直达！"),
     ]
     for name, base, sub, tip in suggestions:
         full_path = os.path.join(base, sub) if sub else base
@@ -309,7 +321,7 @@ def generate_html_report(folder_sizes, all_files, category_sizes,
     html_path = os.path.join(REPORT_DIR, f"report_{ts}.html")
     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    top_files = sorted(all_files, key=lambda x: x[1], reverse=True)[:TOP_N_FILES]
+    top_files = sorted(all_files, key=lambda x: x[1], reverse=True)
     app_groups = defaultdict(list)
     for path, sz, ext in top_files:
         app = guess_app_name(path)
@@ -355,16 +367,37 @@ def generate_html_report(folder_sizes, all_files, category_sizes,
     for app, files in sorted_app_groups:
         group_total = sum(s for _,s,_ in files)
         file_rows = ""
+        
+        display_files = []
+        hidden_files = []
         for path, sz, ext in files:
             cat = get_category(ext)
+            if app == "Windows 系统":
+                hidden_files.append((path, sz, ext, cat))
+            else:
+                display_files.append((path, sz, ext, cat))
+                
+        visible_files = display_files[:20]
+        extra_files = display_files[20:]
+        
+        for path, sz, ext, cat in visible_files:
             color = cat_colors.get(cat, "#95a5a6")
             file_rows += '<tr>'
             file_rows += '<td class="num">' + format_size_short(sz) + '</td>'
             file_rows += '<td><span class="badge sm" style="background:' + color + '">' + html_mod.escape(cat) + '</span></td>'
             file_rows += '<td class="path">' + html_mod.escape(path) + '</td>'
             file_rows += '</tr>\n'
+            
+        merged_count = len(extra_files) + len(hidden_files)
+        if merged_count > 0:
+            merged_sz = sum(s for _,s,_,_ in extra_files) + sum(s for _,s,_,_ in hidden_files)
+            file_rows += '<tr>'
+            file_rows += '<td class="num">' + format_size_short(merged_sz) + '</td>'
+            file_rows += '<td><span class="badge sm" style="background:#555">合并折叠</span></td>'
+            file_rows += '<td class="path" style="color:#888; font-style:italic">📦 还有 ' + str(merged_count) + ' 个较小文件或系统底层文件...</td>'
+            file_rows += '</tr>\n'
 
-        app_sections += '<details open><summary>'
+        app_sections += '<details><summary>'
         app_sections += '<span class="app-name">' + html_mod.escape(app) + '</span>'
         app_sections += '<span class="app-meta">' + format_size_short(group_total) + ' &middot; ' + str(len(files)) + ' 个文件</span>'
         app_sections += '</summary>'
@@ -428,8 +461,12 @@ summary::marker{color:#667eea}
     html_out += '<table><thead><tr><th>#</th><th>大小</th><th>路径</th><th>占比</th></tr></thead>'
     html_out += '<tbody>' + folder_rows + '</tbody></table></div>\n'
 
-    html_out += '<div class="card"><h2><span class="icon">&#x1F50D;</span> 占用最大的 ' + str(TOP_N_FILES) + ' 个文件 — 按应用分组</h2>'
-    html_out += '<p style="color:#888;font-size:0.9em;margin-bottom:16px">点击应用名称可以展开/折叠文件列表</p>'
+    html_out += '<div class="card"><h2><span class="icon">&#x1F50D;</span> 所有文件（>= 1 MB） — 按应用分组</h2>'
+    html_out += '<p style="color:#888;font-size:0.9em;margin-bottom:8px">点击应用名称可以展开/折叠文件列表</p>'
+    html_out += '<div style="background:rgba(102,126,234,0.1);border-left:4px solid #667eea;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:20px;font-size:0.9em;color:#d0d0d0;line-height:1.6;">'
+    html_out += '<strong>💡 小贴士：如何快速找到 AppData 等隐藏文件夹？</strong><br>'
+    html_out += '最快的方法是：鼠标选中文件路径的前半部分（例如 <code>C:\\Users\\用户名\\AppData\\Roaming\\...</code>），<strong>右键复制</strong>，然后打开任意文件夹，将路径<strong>粘贴到顶部的地址栏</strong>中并按回车键，即可瞬间直达目标文件夹！'
+    html_out += '</div>'
     html_out += app_sections + '</div>\n'
 
     html_out += '<div class="safety">&#x1F512; 本工具严格只读，未对 C 盘做任何修改。扫描报告仅供参考，清理前请仔细确认文件用途。</div>\n'
@@ -469,11 +506,7 @@ def main():
             error_paths, total_size, file_count, SCAN_ROOT
         )
         print(f"\n  HTML \u53ef\u89c6\u5316\u62a5\u544a\u5df2\u4fdd\u5b58\u81f3: {html_path}")
-        print("  \u6b63\u5728\u6253\u5f00\u6d4f\u89c8\u5668...")
-        try:
-            webbrowser.open(html_path)
-        except Exception:
-            pass
+        print("  提示：请前往 reports 文件夹查看生成的分析报告。")
     except KeyboardInterrupt:
         print("\n\n  扫描被用户中断。")
     except Exception as e:
